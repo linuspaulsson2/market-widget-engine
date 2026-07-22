@@ -2714,8 +2714,14 @@ def main():
     held_now = {h["ticker"].upper() for h in all_holdings_data if h.get("shares", 0) > 0}
     watchlist_data = fetch_watchlist(held_now)
 
+    # Portfolio value from the live holdings sum (the old Dropbox/Excel source is
+    # gone). Ensures the gist's portfolio object is COMPLETE — the app requires
+    # value_sek/change_sek/change_pct and an empty {} fails to decode.
+    if all_holdings_data:
+        portfolio["value_sek"] = round(sum(h.get("value_sek", 0) or 0 for h in all_holdings_data))
+
     # Räkna om portföljens dagliga SEK-förändring från live-holdings
-    # (Excel-värdet uppdateras inte intradag, men change_pct per holding är live)
+    # (change_pct per holding är live)
     if portfolio and all_holdings_data:
         live_change_sek = sum(
             h.get("value_sek", 0) * h.get("change_pct", 0) / 100
@@ -2726,6 +2732,12 @@ def main():
         portfolio["change_sek"] = round(live_change_sek)
         portfolio["change_pct"] = round(live_change_pct, 2)
         print(f"  Daglig förändring (live): {live_change_sek:+,.0f} kr ({live_change_pct:+.2f}%)")
+
+    # Guarantee a complete portfolio object even if holdings couldn't be fetched
+    # (the app's Portfolio decoder requires all three fields; {} crashes it).
+    portfolio.setdefault("value_sek", 0)
+    portfolio.setdefault("change_sek", 0)
+    portfolio.setdefault("change_pct", 0.0)
 
     # Sortera aktier efter störst rörelse (mest intressant först)
     stocks_sorted = sorted(stocks, key=lambda s: abs(s["change_pct"]), reverse=True)
