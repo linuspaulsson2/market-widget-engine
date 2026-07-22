@@ -1,0 +1,67 @@
+# Market Widget ENGINE (public repo → free unlimited Actions).
+# Holds ONLY the compute (this workflow + update_data.py). All portfolio data
+# lives in the PRIVATE repo linuspaulsson2/market-widget and is fetched at
+# runtime with the read-only DATA_TOKEN secret — nothing sensitive is stored here.
+name: Update Market Data
+
+on:
+  # Triggered by cron-job.org (workflow_dispatch). No schedule: keeps it simple.
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch private data
+        env:
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER=linuspaulsson2
+          REPO=market-widget
+          mkdir -p InvestmentApp/InvestmentApp
+          # $1 = path in the private repo, $2 = local destination, $3 = "required"|"optional"
+          fetch() {
+            code=$(curl -sL -o "$2" -w "%{http_code}" \
+              -H "Authorization: Bearer $DATA_TOKEN" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/$OWNER/$REPO/contents/$1")
+            if [ "$code" != "200" ]; then
+              rm -f "$2"
+              if [ "$3" = "required" ]; then
+                echo "::error::Kunde inte hämta $1 (HTTP $code)"; exit 1
+              else
+                echo "  hoppar över $1 (HTTP $code)"
+              fi
+            else
+              echo "  hämtade $1"
+            fi
+          }
+          fetch config.json                                config.json                                required
+          fetch all_holdings.json                          all_holdings.json                          optional
+          fetch watchlist.json                             watchlist.json                             optional
+          fetch focus_stocks.json                          focus_stocks.json                          optional
+          fetch stock_meta.json                            stock_meta.json                            optional
+          fetch splits.json                                splits.json                                optional
+          fetch InvestmentApp/InvestmentApp/purchases.json InvestmentApp/InvestmentApp/purchases.json optional
+
+      - name: Run update
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DROPBOX_XLSX_URL: ${{ secrets.DROPBOX_XLSX_URL }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: python update_data.py
