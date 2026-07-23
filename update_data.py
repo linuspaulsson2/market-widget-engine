@@ -2441,6 +2441,76 @@ def _safe_json(data, **kwargs):
     return json.dumps(_sanitize_nan(data), cls=SafeEncoder, ensure_ascii=False, **kwargs)
 
 
+COMPANY_INFO_MAX_AGE_DAYS = 7        # refresh a ticker's fundamentals at most weekly
+COMPANY_INFO_MAX_FETCH_PER_RUN = 8   # cap slow .info calls per run (cold start spreads out)
+
+
+def _trim_sentences(text: str, n: int = 3) -> str:
+    text = " ".join((text or "").split())
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(parts[:n]).strip()
+
+
+def build_company_info(tickers: list, previous: dict, today: str) -> dict:
+    """Description + 6 key metrics per ticker for the app's detail view.
+
+    Cached in the gist itself (the workflow commits no files back, so the
+    previous gist is our only durable store): carry `previous` forward and only
+    hit the slow yfinance `.info` for tickers that are missing or older than a
+    week, capped per run so a cold start spreads across several runs.
+    """
+    out = {t: dict(v) for t, v in (previous or {}).items()}
+
+    def _age_days(stamp: str) -> int:
+        try:
+            return (datetime.strptime(today, "%Y-%m-%d")
+                    - datetime.strptime(stamp, "%Y-%m-%d")).days
+        except Exception:
+            return 9999
+
+    fetched, seen = 0, set()
+    for t in tickers:
+        tu = (t or "").upper()
+        if not tu or tu in seen:
+            continue
+        seen.add(tu)
+        cur = out.get(tu)
+        if cur and cur.get("fetched") and _age_days(cur["fetched"]) < COMPANY_INFO_MAX_AGE_DAYS:
+            continue
+        if fetched >= COMPANY_INFO_MAX_FETCH_PER_RUN:
+            continue
+        try:
+            info = yf.Ticker(t).info or {}
+        except Exception as e:
+            print(f"    company_info: {t} misslyckades ({e})")
+            continue
+        if not info:
+            continue
+        out[tu] = {
+            "description": _trim_sentences(info.get("longBusinessSummary") or "", 3),
+            "marketCap": info.get("marketCap"),
+            "trailingPE": info.get("trailingPE"),
+            "priceToSales": info.get("priceToSalesTrailing12Months"),
+            "netMargin": info.get("profitMargins"),
+            "revenueGrowth": info.get("revenueGrowth"),
+            # trailingAnnualDividendYield is a clean fraction (0.0013); the raw
+            # dividendYield field flip-flops between fraction and percent by
+            # yfinance version, so avoid it.
+            "dividendYield": info.get("trailingAnnualDividendYield"),
+            "currency": info.get("currency"),
+            "fetched": today,
+        }
+        fetched += 1
+        print(f"    company_info: hämtade {t}")
+
+    keep = {(t or "").upper() for t in tickers}
+    out = {t: v for t, v in out.items() if t in keep}
+    print(f"  company_info: {fetched} nya/uppdaterade, {len(out)} bolag totalt")
+    return out
+
+
 def update_gist(data: dict):
     """Uppdatera (eller skapa) en GitHub Gist med JSON-datan."""
     token = os.environ.get("GIST_TOKEN")
@@ -2747,6 +2817,14 @@ def main():
     if weekly_summary:
         print(f"\nVeckosammanfattning: {weekly_summary.get('text', '')[:80]}...")
 
+    # Bolagsinfo (beskrivning + 6 nyckeltal) för detaljvyn — cachad i gisten.
+    print("\nBolagsinfo (beskrivning + nyckeltal)...")
+    company_info = build_company_info(
+        [h["ticker"] for h in all_holdings_data] + [w["ticker"] for w in watchlist_data],
+        _prev_gist.get("company_info", {}) or {},
+        market["timestamp_swe"][:10],
+    )
+
     # Bygg slutlig JSON
     data = {
         "updated_at": market["timestamp_swe"],
@@ -2770,6 +2848,7 @@ def main():
         "weekly_summary": weekly_summary,
         "all_holdings": all_holdings_data,
         "watchlist": watchlist_data,
+        "company_info": company_info,
     }
 
     # Publicera
