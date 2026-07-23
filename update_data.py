@@ -2818,12 +2818,18 @@ def main():
         print(f"\nVeckosammanfattning: {weekly_summary.get('text', '')[:80]}...")
 
     # Bolagsinfo (beskrivning + 6 nyckeltal) för detaljvyn — cachad i gisten.
+    # Får aldrig fälla hela körningen: vid fel behåller vi förra gistens cache.
     print("\nBolagsinfo (beskrivning + nyckeltal)...")
-    company_info = build_company_info(
-        [h["ticker"] for h in all_holdings_data] + [w["ticker"] for w in watchlist_data],
-        _prev_gist.get("company_info", {}) or {},
-        market["timestamp_swe"][:10],
-    )
+    _prev_company_info = _prev_gist.get("company_info", {}) or {}
+    try:
+        company_info = build_company_info(
+            [h["ticker"] for h in all_holdings_data] + [w["ticker"] for w in watchlist_data],
+            _prev_company_info,
+            market["timestamp_swe"][:10],
+        )
+    except Exception as _e:
+        print(f"  (company_info misslyckades, behåller cache: {_e})")
+        company_info = _prev_company_info
 
     # Bygg slutlig JSON
     data = {
