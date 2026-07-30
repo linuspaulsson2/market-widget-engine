@@ -2564,6 +2564,43 @@ def update_gist(data: dict):
         sys.exit(1)
 
 
+def write_private_data(data: dict):
+    """Skriv market_data.json till det PRIVATA repot (autentiserat) så portföljen
+    aldrig ligger publikt läsbar. Best-effort: en saknad eller otillräcklig token
+    loggar en varning men FÄLLER INTE körningen — så dubbelskrivningen under
+    övergången aldrig kan bryta pipelinen. Kräver en token med Contents: Write på
+    linuspaulsson2/market-widget (t.ex. DATA_TOKEN uppgraderad, eller en separat
+    PRIVATE_WRITE_TOKEN)."""
+    import base64
+    token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
+    if not token:
+        print("  (privat skrivning hoppas över — ingen PRIVATE_WRITE_TOKEN/DATA_TOKEN)")
+        return
+    api = "https://api.github.com/repos/linuspaulsson2/market-widget/contents/market_data.json"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    try:
+        sha = None
+        g = requests.get(f"{api}?ref=main", headers=headers, timeout=30)
+        if g.status_code == 200:
+            sha = g.json().get("sha")
+        elif g.status_code != 404:
+            print(f"  (privat skrivning: kunde inte läsa SHA, HTTP {g.status_code})")
+        body = {
+            "message": f"Update market_data.json ({data.get('updated_at', '')})",
+            "content": base64.b64encode(_safe_json(data, indent=2).encode("utf-8")).decode("ascii"),
+            "branch": "main",
+        }
+        if sha:
+            body["sha"] = sha
+        p = requests.put(api, headers=headers, json=body, timeout=60)
+        if p.status_code in (200, 201):
+            print("  Privat market_data.json skriven till linuspaulsson2/market-widget")
+        else:
+            print(f"  (privat skrivning misslyckades: HTTP {p.status_code} — {p.text[:160]})")
+    except Exception as e:
+        print(f"  (privat skrivning fel: {e})")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2894,7 +2931,8 @@ def main():
     }
 
     # Publicera
-    update_gist(data)
+    update_gist(data)          # publik gist — tas bort i fas 3 (privat enbart)
+    write_private_data(data)   # privat repo (autentiserad) — fas 1 dubbelskrivning
     print("\nKlart!")
 
 
