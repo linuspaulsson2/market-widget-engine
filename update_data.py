@@ -2113,11 +2113,11 @@ def fetch_previous_portfolio() -> dict:
 
             if old_date == today_str:
                 # Samma dag — behåll befintlig prev_close
-                result["prev_close_sek"] = port.get("prev_close_sek", old_value)
+                result["prev_close_sek"] = port.get("prev_close_sek") or old_value
             elif weekday in (5, 6):
                 # Helg — använd fredagens prev_close (som redan var satt)
                 # så att vi inte nollställer mot helg-värdet
-                result["prev_close_sek"] = port.get("prev_close_sek", old_value)
+                result["prev_close_sek"] = port.get("prev_close_sek") or old_value
             else:
                 # Ny börsdag — gårdagens sista värde blir prev_close
                 result["prev_close_sek"] = old_value
