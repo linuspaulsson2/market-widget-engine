@@ -1370,6 +1370,12 @@ NOISE_KEYWORDS = [
     "doubles down", "bets big on",  # vaga utan siffror
     "what investors should know", "what it means for",
     "why investors", "why this matters",
+    # Analytiker-åsikt / värdering — inte en händelse, bara någons tyckande
+    "fair value", "what we think", "margin story", "our take", "our view",
+    "looks above", "looks below", "looks overvalued", "looks undervalued",
+    "looks fairly valued", "price target", "raises target", "cuts target",
+    "what analysts", "analysts say", "worth a look", "faces margin",
+    "net margin holds", "valuation looks", "is it worth",
 ]
 
 
@@ -1583,6 +1589,89 @@ def fetch_finnhub_company_news(ticker: str, days_back: int = 3) -> list:
     return []
 
 
+def generate_smart_news(all_holdings_data, upcoming_earnings, max_tickers: int = 8) -> list:
+    """D+C-motorn: trigga på FAKTISK händelse (stor kursrörelse ELLER rapport nära)
+    och låt Claude med web_search hitta + BEDÖMA + förklara den materiella nyheten
+    i 4-5 rader svenska + impact + källa. Returnerar [] vid fel/tomt så anroparen
+    kan falla tillbaka på den gamla nyckelords-vägen (collect_top_news)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return []
+
+    # 1. Bygg trigger-lista: stora dagsrörelser + rapport inom 2 dagar.
+    triggers = {}
+    for h in all_holdings_data or []:
+        t = h.get("ticker")
+        cp = h.get("change_pct")
+        if t and isinstance(cp, (int, float)) and abs(cp) >= 3.0:
+            triggers[t] = {"name": h.get("name", t), "reason": f"dagsrörelse {cp:+.1f}%", "prio": abs(cp)}
+    for e in upcoming_earnings or []:
+        t = e.get("ticker")
+        du = e.get("days_until", 99)
+        if t and du <= 2:
+            r = "rapporterar " + ("idag" if du == 0 else "imorgon" if du == 1 else f"om {du}d")
+            if t in triggers:
+                triggers[t]["reason"] += "; " + r
+                triggers[t]["prio"] += 5
+            else:
+                triggers[t] = {"name": e.get("name", t), "reason": r, "prio": 5}
+
+    if not triggers:
+        print("  Smart news: inga triggrande bolag (ingen stor rörelse/rapport nära)")
+        return []
+
+    top = sorted(triggers.items(), key=lambda kv: kv[1]["prio"], reverse=True)[:max_tickers]
+    listing = "\n".join(f"{i+1}. {v['name']} ({t}) — {v['reason']}" for i, (t, v) in enumerate(top))
+    prompt = f"""Du är analytiker för en LÅNGSIKTIG investerare (3-5 års horisont). Nedan är innehav där något hänt idag (stor kursrörelse eller rapport nära). Sök upp den senaste MATERIELLA nyheten (senaste ~3 dygnen) för varje och bedöm om den faktiskt spelar roll för den långsiktiga tesen.
+
+Innehav:
+{listing}
+
+För VARJE bolag: sök webben, hitta den viktigaste färska nyheten, och bedöm materialiteten:
+- MATERIELLT (rapport, guidance, förvärv, VD-byte, reglering, strukturell efterfrågan) → behåll.
+- BRUS (vinsthemtagning, värderings-tyckande, analytiker-åsikt "fair value", "stock up X%") → hoppa över.
+- En stor kursrörelse UTAN materiell orsak = impact MED eller LOW, INTE HIGH. En VD-byte/guidance med tråkig rubrik = HIGH.
+
+Svara ENBART med en JSON-array, inget annat. Ett objekt per bolag som har en materiell nyhet:
+[{{"ticker":"AAPL","rubrik":"kort svensk rubrik (~60 tecken)","sammanfattning":"4-5 rader svenska: vad hände + varför det spelar roll för tesen. Konkret, med siffror.","impact":"HIGH|MED|LOW","kalla":"källans namn","url":"länk"}}]"""
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 12}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", None) == "text")
+        m = re.search(r"\[.*\]", text, re.DOTALL)
+        if not m:
+            print("  Smart news: ingen JSON i Claude-svaret — fallback")
+            return []
+        arr = json.loads(m.group(0))
+    except Exception as e:
+        print(f"  Smart news FEL (fallback till gamla vägen): {e}")
+        return []
+
+    out = []
+    for o in arr:
+        t = o.get("ticker")
+        if not t or not o.get("sammanfattning"):
+            continue
+        out.append({
+            "ticker": t,
+            "stock_name": triggers.get(t, {}).get("name", t),
+            "title": o.get("rubrik", ""),
+            "title_sv": o.get("rubrik", ""),
+            "summary": o.get("sammanfattning", ""),
+            "publisher": o.get("kalla", ""),
+            "link": o.get("url", ""),
+            "impact": (o.get("impact") or "MED").upper(),
+            "signal_type": "SMART",
+        })
+    print(f"  Smart news: {len(out)} materiella nyheter från {len(top)} triggrande bolag")
+    return out
+
+
 def collect_top_news(stocks: list, max_items: int = 8) -> list:
     """Samla viktiga bolagsnyheter. Hybrid: Finnhub för US, yfinance för SE.
 
@@ -1614,6 +1703,7 @@ def collect_top_news(stocks: list, max_items: int = 8) -> list:
                     "title": n.get("headline", ""),
                     "publisher": n.get("source", ""),
                     "link": n.get("url", ""),
+                    "summary": str(n.get("summary", "")),
                 })
 
         # Komplettera med yfinance (bredare nyhetskällor: Reuters, Bloomberg, etc.)
@@ -1627,15 +1717,18 @@ def collect_top_news(stocks: list, max_items: int = 8) -> list:
                         provider = content.get("provider", {})
                         provider_name = str(provider.get("displayName", "")) if isinstance(provider, dict) else ""
                         link = str(content.get("canonicalUrl", {}).get("url", "")) if isinstance(content.get("canonicalUrl"), dict) else ""
+                        snippet = str(content.get("summary", "") or content.get("description", ""))
                     else:
                         title = str(item.get("title", ""))
                         provider_name = str(item.get("publisher", ""))
                         link = str(item.get("link", ""))
+                        snippet = str(item.get("summary", ""))
                     if title and title not in {n.get("title", "") for n in news_items}:
                         news_items.append({
                             "title": title,
                             "publisher": provider_name,
                             "link": link,
+                            "summary": snippet,
                         })
 
         # Google News RSS som tredje källa (fångar Bloomberg, CNBC, Reuters)
@@ -1678,7 +1771,7 @@ def collect_top_news(stocks: list, max_items: int = 8) -> list:
                 "ticker": ticker,
                 "stock_name": stock["name"],
                 "signal_type": _classify_signal(best_title),
-                "impact": _score_to_impact(best_score),
+                "impact": _news_impact(best_title, stock.get("change_pct"), best_score),
             })
 
     return important_news[:max_items]
@@ -2277,6 +2370,26 @@ def _score_to_impact(score: int) -> str:
     return "LOW"
 
 
+def _news_impact(title: str, change_pct, relevance_score: int) -> str:
+    """Impact från FAKTISK materialitet, inte bara rubrik-nyckelord:
+    dagens kursrörelse väger tyngst, sen hårda händelse-ord (rapport/M&A/ledning/
+    reglering), sen relevanspoäng. En stor kursrörelse ⇒ något materiellt hände."""
+    move = abs(change_pct) if isinstance(change_pct, (int, float)) else 0.0
+    lower = title.lower()
+    hard_event = any(w in lower for w in (
+        "earnings", "revenue", "profit", "guidance", "forecast", "results",
+        "acquire", "acquisition", "merger", "buyout", "resign", "step down",
+        "new ceo", "new cfo", "recall", "lawsuit", "fine", "probe", "antitrust",
+        "downgrade", "upgrade", "warns", "cuts", "slashes", "surges", "plunges",
+        "beats", "misses", "rapport", "vinstvarning", "förvärv", "avgår",
+    ))
+    if move >= 3.0 or (hard_event and relevance_score >= 70):
+        return "HIGH"
+    if move >= 1.5 or relevance_score >= 60 or hard_event:
+        return "MED"
+    return "LOW"
+
+
 def _classify_signal(title: str) -> str:
     """Klassificera en nyhet: ENERGI, RISK, MAKRO, AI, CLOUD, KONSUMENT, LEDNING eller SIGNAL."""
     lower = title.lower()
@@ -2811,28 +2924,8 @@ def main():
         else:
             print("  Inga rapporter denna vecka")
 
-        # Injicera rapport-påminnelser som nyheter (inom 7 dagar)
-        earnings_soon = [e for e in upcoming_earnings if e["days_until"] <= 7]
-        for e in earnings_soon:
-            days = e["days_until"]
-            if days == 0:
-                label = f"IDAG: {e['name']} rapporterar ({e['date_display']})"
-            elif days == 1:
-                label = f"IMORGON: {e['name']} rapporterar ({e['date_display']})"
-            else:
-                label = f"OM {days} DAGAR: {e['name']} rapporterar ({e['date_display']})"
-            ticker = e["ticker"]
-            is_swedish = ticker.endswith(".ST")
-            top_news.append({
-                "title": label,
-                "title_sv": label,
-                "publisher": "Kalender",
-                "ticker": ticker,
-                "stock_name": e["name"],
-                "signal_type": "RAPPORT",
-                "impact": "HIGH" if days <= 1 else "MED",
-            })
-            print(f"  📅 Rapport-påminnelse: {label}")
+        # (Rapport-påminnelser injiceras INTE längre som nyheter — de finns i
+        #  Kalender-fliken. "Viktigt nu" ska bara vara riktiga händelser.)
 
         # Hämta kommande utdelningar
         print("\nKollar kommande utdelningar...")
@@ -2894,6 +2987,16 @@ def main():
         calendar_updated_at = _prev_cal_stamp
         print(f"\nKalender: återanvänder {len(upcoming_earnings)} rapporter, "
               f"{len(upcoming_dividends)} utdelningar (färsk nog)")
+
+    # Smart bolagsnyheter (D+C): trigga på faktisk händelse (stor rörelse/rapport)
+    # och låt Claude+web_search hitta, bedöma och förklara i 4-5 rader svenska.
+    # Ersätter den gamla nyckelords-vägen (top_news) när den ger något; annars
+    # behålls fallbacken.
+    if NEWS_ENABLED and refresh_news:
+        print("\nSmart news (Claude + web_search)…")
+        _smart = generate_smart_news(all_holdings_data, upcoming_earnings)
+        if _smart:
+            top_news = _smart
 
     # Hämta watchlist-aktier (bevakning, ej köpt än). Exkludera tickers du redan
     # äger så att en bevakad aktie som blivit köpt bara visas under Innehav.
