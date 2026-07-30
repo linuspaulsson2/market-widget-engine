@@ -1589,7 +1589,7 @@ def fetch_finnhub_company_news(ticker: str, days_back: int = 3) -> list:
     return []
 
 
-def generate_smart_news(all_holdings_data, upcoming_earnings, max_tickers: int = 8) -> list:
+def generate_smart_news(all_holdings_data, upcoming_earnings, max_tickers: int = 10) -> list:
     """D+C-motorn: trigga på FAKTISK händelse (stor kursrörelse ELLER rapport nära)
     och låt Claude med web_search hitta + BEDÖMA + förklara den materiella nyheten
     i 4-5 rader svenska + impact + källa. Returnerar [] vid fel/tomt så anroparen
@@ -1632,14 +1632,19 @@ För VARJE bolag: sök webben, hitta den viktigaste färska nyheten, och bedöm 
 - BRUS (vinsthemtagning, värderings-tyckande, analytiker-åsikt "fair value", "stock up X%") → hoppa över.
 - En stor kursrörelse UTAN materiell orsak = impact MED eller LOW, INTE HIGH. En VD-byte/guidance med tråkig rubrik = HIGH.
 
+SKRIVSTIL — skarpt, som en vass analytiker till en påläst ägare:
+- Led med det viktigaste. Siffror först. Ingen utfyllnad, inga floskler ("kan påverka", "det återstår att se").
+- Säg exakt VAD som hände och exakt VARFÖR det ändrar (eller inte ändrar) den långsiktiga tesen — konkret, inte allmänt.
+- 4-5 korta, täta rader. Aktiv svenska. Om osäkert läge: säg vad man ska bevaka.
+
 Svara ENBART med en JSON-array, inget annat. Ett objekt per bolag som har en materiell nyhet:
-[{{"ticker":"AAPL","rubrik":"kort svensk rubrik (~60 tecken)","sammanfattning":"4-5 rader svenska: vad hände + varför det spelar roll för tesen. Konkret, med siffror.","impact":"HIGH|MED|LOW","kalla":"källans namn","url":"länk"}}]"""
+[{{"ticker":"AAPL","rubrik":"kort vass svensk rubrik (~60 tecken)","sammanfattning":"4-5 skarpa rader svenska enligt skrivstilen ovan","impact":"HIGH|MED|LOW","kalla":"källans namn","url":"länk"}}]"""
     try:
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 12}],
+            model="claude-opus-4-8",
+            max_tokens=6000,
+            tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 15}],
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(getattr(b, "text", "") for b in msg.content if getattr(b, "type", None) == "text")
@@ -2855,7 +2860,7 @@ def main():
     # tillfälligt av juli 2026 för att spara Actions-minuter. Sätt True för att
     # slå på igen (då hämtas de som mest var NEWS_REFRESH_HOURS:e timme).
     NEWS_ENABLED = True
-    NEWS_REFRESH_HOURS = 3
+    NEWS_REFRESH_HOURS = 0  # TILLFÄLLIGT: forcera färsk körning för att testa web_search
     _prev_gist = _read_prev_public()
     refresh_news = True
     _prev_news_stamp = _prev_gist.get("news_updated_at", "")
