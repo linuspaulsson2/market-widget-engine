@@ -2755,6 +2755,32 @@ def publish_public_gist(public_data: dict, arenas_json: str):
     if not token:
         print("  (publik gist hoppas över — ingen GIST_TOKEN med gist-scope)")
         return
+
+    # NYHETER ÄGS AV DEN LOKALA CLAUDE CODE-MOTORN (skriver rakt till gisten).
+    # Läs LIVE-gisten AUKTORITATIVT (autentiserat + cache-bust) precis före skrivning
+    # och bevara dess news/news_updated_at/market_news. INVARIANT: skriv aldrig tomt
+    # över icke-tomt — det var det som gav "death spiral" där en stale (edge-cachad)
+    # oautentiserad läsning nollade nyheterna och sedan permanentade tomheten.
+    try:
+        _live = requests.get(
+            f"https://api.github.com/gists/{PUBLIC_GIST_ID}",
+            headers={"Authorization": f"token {token}",
+                     "Accept": "application/vnd.github+json",
+                     "Cache-Control": "no-cache"},
+            params={"_": int(datetime.now().timestamp())}, timeout=30)
+        if _live.status_code == 200:
+            _lc = _live.json().get("files", {}).get("market_data.json", {})
+            _lpd = json.loads(_lc.get("content", "{}") or "{}")
+            _live_news = _lpd.get("news") or []
+            if _live_news:  # bara bevara om det faktiskt finns nyheter att bevara
+                public_data["news"] = _live_news
+                public_data["news_updated_at"] = _lpd.get("news_updated_at") or public_data.get("news_updated_at", "")
+                if _lpd.get("market_news"):
+                    public_data["market_news"] = _lpd["market_news"]
+                print(f"  Bevarar {len(_live_news)} live-nyheter (skrivna av lokala motorn)")
+    except Exception as e:
+        print(f"  (kunde inte läsa live-nyheter, behåller pipeline-värde: {e})")
+
     files = {"market_data.json": {"content": _safe_json(public_data, indent=2)}}
     if arenas_json:
         files["arenas.json"] = {"content": arenas_json}
