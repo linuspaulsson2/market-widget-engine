@@ -2574,7 +2574,11 @@ def write_private_data(data: dict):
     import base64
     token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
     if not token:
-        print("  (privat skrivning hoppas över — ingen PRIVATE_WRITE_TOKEN/DATA_TOKEN)")
+        # Lokalt läge (ingen token): spara till fil istället för att fela.
+        output_path = SCRIPT_DIR / "widget_data.json"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(_safe_json(data, indent=2))
+        print(f"\nIngen token — sparade data lokalt till: {output_path}")
         return
     api = "https://api.github.com/repos/linuspaulsson2/market-widget/contents/market_data.json"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
@@ -2596,9 +2600,13 @@ def write_private_data(data: dict):
         if p.status_code in (200, 201):
             print("  Privat market_data.json skriven till linuspaulsson2/market-widget")
         else:
-            print(f"  (privat skrivning misslyckades: HTTP {p.status_code} — {p.text[:160]})")
+            print(f"\nFEL: privat skrivning misslyckades: HTTP {p.status_code} — {p.text[:200]}")
+            sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        print(f"  (privat skrivning fel: {e})")
+        print(f"\nFEL: privat skrivning fel: {e}")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -2930,9 +2938,8 @@ def main():
         "company_info": company_info,
     }
 
-    # Publicera
-    update_gist(data)          # publik gist — tas bort i fas 3 (privat enbart)
-    write_private_data(data)   # privat repo (autentiserad) — fas 1 dubbelskrivning
+    # Publicera — ENBART till det privata repot (portföljen aldrig publikt läsbar).
+    write_private_data(data)
     print("\nKlart!")
 
 
