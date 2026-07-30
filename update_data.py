@@ -2533,26 +2533,41 @@ PUBLIC_GIST_ID = "b2b5723bb0a7396253041591548e413b"
 
 def split_public_private(data: dict) -> tuple:
     """Dela feeden i (public_data, private_data). Publik = allt UTOM belopp:
-    hela `portfolio`-objektet tas bort och AMOUNT_KEYS strippas ur varje
-    all_holdings-post. Privat = { portfolio, amounts:{ticker:{belopp}} }."""
+    `portfolio`-objektet tas bort och AMOUNT_KEYS strippas REKURSIVT ur hela
+    strukturen (all_holdings, watchlist, ev. nästlade — skottsäkert). Privat =
+    { portfolio, amounts:{ticker:{belopp}} } samlat från både innehav OCH watchlist."""
     import copy
-    public = copy.deepcopy(data)
-    public.pop("portfolio", None)
-    for h in public.get("all_holdings", []) or []:
-        for k in AMOUNT_KEYS:
-            h.pop(k, None)
 
+    # Samla belopp per ticker från alla holding-listor.
     amounts = {}
-    for h in data.get("all_holdings", []) or []:
-        t = h.get("ticker")
-        if not t:
-            continue
-        amounts[t] = {k: h[k] for k in AMOUNT_KEYS if k in h}
+    for lst in (data.get("all_holdings") or [], data.get("watchlist") or []):
+        for h in lst:
+            if not isinstance(h, dict):
+                continue
+            t = h.get("ticker")
+            amt = {k: h[k] for k in AMOUNT_KEYS if k in h}
+            if t and amt:
+                amounts.setdefault(t, {}).update(amt)
     private = {
         "updated_at": data.get("updated_at", ""),
         "portfolio": data.get("portfolio", {}),
         "amounts": amounts,
     }
+
+    # Publik: djup kopia, ta bort portfolio, strippa belopp rekursivt överallt.
+    public = copy.deepcopy(data)
+    public.pop("portfolio", None)
+
+    def _strip(o):
+        if isinstance(o, dict):
+            for k in AMOUNT_KEYS:
+                o.pop(k, None)
+            for v in o.values():
+                _strip(v)
+        elif isinstance(o, list):
+            for it in o:
+                _strip(it)
+    _strip(public)
     return public, private
 
 
