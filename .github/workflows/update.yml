@@ -62,8 +62,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DROPBOX_XLSX_URL: ${{ secrets.DROPBOX_XLSX_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          # Skriv/läs market_data.json i privata repot (Contents: Write på market-widget).
-          # DATA_TOKEN uppgraderad till write (eller separat PRIVATE_WRITE_TOKEN).
+          # Privat skrivning (portfolio.json + full market_data.json): Contents: Write på market-widget.
           DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           PRIVATE_WRITE_TOKEN: ${{ secrets.PRIVATE_WRITE_TOKEN }}
+          # Publik gist (allt utom belopp): behöver en token med 'gist'-scope.
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: python update_data.py

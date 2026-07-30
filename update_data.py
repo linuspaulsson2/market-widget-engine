@@ -2526,6 +2526,105 @@ def _read_private_market_data() -> dict:
         return {}
 
 
+# Fält som avslöjar BELOPP — får aldrig hamna i den publika feeden.
+AMOUNT_KEYS = ("shares", "invested", "value_sek", "pct_of_portfolio", "change_sek")
+PUBLIC_GIST_ID = "b2b5723bb0a7396253041591548e413b"
+
+
+def split_public_private(data: dict) -> tuple:
+    """Dela feeden i (public_data, private_data). Publik = allt UTOM belopp:
+    hela `portfolio`-objektet tas bort och AMOUNT_KEYS strippas ur varje
+    all_holdings-post. Privat = { portfolio, amounts:{ticker:{belopp}} }."""
+    import copy
+    public = copy.deepcopy(data)
+    public.pop("portfolio", None)
+    for h in public.get("all_holdings", []) or []:
+        for k in AMOUNT_KEYS:
+            h.pop(k, None)
+
+    amounts = {}
+    for h in data.get("all_holdings", []) or []:
+        t = h.get("ticker")
+        if not t:
+            continue
+        amounts[t] = {k: h[k] for k in AMOUNT_KEYS if k in h}
+    private = {
+        "updated_at": data.get("updated_at", ""),
+        "portfolio": data.get("portfolio", {}),
+        "amounts": amounts,
+    }
+    return public, private
+
+
+def _gh_put_private(path: str, content_str: str, message: str):
+    """PUT en fil till det PRIVATA repot (contents-API). sys.exit(1) vid fel."""
+    import base64
+    token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
+    if not token:
+        print(f"  (privat skrivning av {path} hoppas över — ingen token)")
+        return
+    api = f"https://api.github.com/repos/linuspaulsson2/market-widget/contents/{path}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    try:
+        sha = None
+        g = requests.get(f"{api}?ref=main", headers=headers, timeout=30)
+        if g.status_code == 200:
+            sha = g.json().get("sha")
+        body = {"message": message, "branch": "main",
+                "content": base64.b64encode(content_str.encode("utf-8")).decode("ascii")}
+        if sha:
+            body["sha"] = sha
+        p = requests.put(api, headers=headers, json=body, timeout=60)
+        if p.status_code in (200, 201):
+            print(f"  Privat {path} skriven")
+        else:
+            print(f"\nFEL: privat skrivning av {path}: HTTP {p.status_code} — {p.text[:200]}")
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"\nFEL: privat skrivning av {path}: {e}")
+        sys.exit(1)
+
+
+def _read_arenas_private() -> str:
+    """Läs arenas.json (JSON-sträng) från det privata repot för publik spegling."""
+    token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
+    if not token:
+        return ""
+    try:
+        r = requests.get(
+            "https://api.github.com/repos/linuspaulsson2/market-widget/contents/arenas/arenas.json?ref=main",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.raw"},
+            timeout=30)
+        return r.text if r.status_code == 200 else ""
+    except Exception:
+        return ""
+
+
+def publish_public_gist(public_data: dict, arenas_json: str):
+    """Uppdatera den PUBLIKA gisten (market_data.json utan belopp + arenas.json).
+    Best-effort: en saknad gist-token loggar men fäller inte körningen."""
+    token = os.environ.get("GIST_TOKEN") or os.environ.get("PUBLIC_GIST_TOKEN")
+    if not token:
+        print("  (publik gist hoppas över — ingen GIST_TOKEN med gist-scope)")
+        return
+    files = {"market_data.json": {"content": _safe_json(public_data, indent=2)}}
+    if arenas_json:
+        files["arenas.json"] = {"content": arenas_json}
+    try:
+        r = requests.patch(f"https://api.github.com/gists/{PUBLIC_GIST_ID}",
+                           headers={"Authorization": f"token {token}",
+                                    "Accept": "application/vnd.github+json"},
+                           json={"files": files}, timeout=60)
+        if r.status_code == 200:
+            print("  Publik gist uppdaterad (utan belopp)")
+        else:
+            print(f"  (publik gist misslyckades: HTTP {r.status_code} — {r.text[:160]})")
+    except Exception as e:
+        print(f"  (publik gist fel: {e})")
+
+
 def write_private_data(data: dict):
     """Skriv market_data.json till det PRIVATA repot (autentiserat) så portföljen
     aldrig ligger publikt läsbar. Best-effort: en saknad eller otillräcklig token
@@ -2893,8 +2992,15 @@ def main():
         "company_info": company_info,
     }
 
-    # Publicera — ENBART till det privata repot (portföljen aldrig publikt läsbar).
+    # Publicera i tre delar:
+    #  - privat FULL market_data.json → carry-forward + installerad app under övergången
+    #  - privat portfolio.json        → BELOPPEN (nya appen läser, aldrig publikt)
+    #  - publik gist                  → allt UTOM belopp + arenas.json (spegel)
+    public_data, private_data = split_public_private(data)
     write_private_data(data)
+    _gh_put_private("portfolio.json", _safe_json(private_data, indent=2),
+                    f"Update portfolio.json ({data.get('updated_at', '')})")
+    publish_public_gist(public_data, _read_arenas_private())
     print("\nKlart!")
 
 
