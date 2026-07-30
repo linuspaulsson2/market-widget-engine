@@ -2860,7 +2860,7 @@ def main():
     # tillfälligt av juli 2026 för att spara Actions-minuter. Sätt True för att
     # slå på igen (då hämtas de som mest var NEWS_REFRESH_HOURS:e timme).
     NEWS_ENABLED = True
-    NEWS_REFRESH_HOURS = 0  # TILLFÄLLIGT: forcera färsk körning för att testa web_search
+    NEWS_REFRESH_HOURS = 20  # nyheter (och smart news) uppdateras ~en gång/dygn
     _prev_gist = _read_prev_public()
     refresh_news = True
     _prev_news_stamp = _prev_gist.get("news_updated_at", "")
