@@ -2094,12 +2094,9 @@ def fetch_previous_portfolio() -> dict:
     Hanterar helger korrekt: sparar fredagens stängningsvärde
     som prev_close så att helg-körningar visar riktig förändring.
     """
-    gist_id = os.environ.get("GIST_ID", "8460e555321c49d26ebbb1d643ead354")
     try:
-        raw_url = f"https://gist.githubusercontent.com/linuspaulsson2/{gist_id}/raw/market_data.json"
-        r = requests.get(raw_url, timeout=15)
-        if r.status_code == 200:
-            old_data = r.json()
+        old_data = _read_private_market_data()
+        if old_data:
             port = old_data.get("portfolio", {})
             old_value = port.get("value_sek", 0)
             old_date = old_data.get("updated_at", "")[:10]
@@ -2511,57 +2508,22 @@ def build_company_info(tickers: list, previous: dict, today: str) -> dict:
     return out
 
 
-def update_gist(data: dict):
-    """Uppdatera (eller skapa) en GitHub Gist med JSON-datan."""
-    token = os.environ.get("GIST_TOKEN")
-    gist_id = os.environ.get("GIST_ID", "")
-
+def _read_private_market_data() -> dict:
+    """Läs förra körningens market_data.json från det PRIVATA repot — källan efter
+    att den publika gisten togs bort. Används för carry-forward (portföljvärde,
+    nyheter, kalender). Returnerar {} vid fel eller lokalt läge (ingen token)."""
+    token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
     if not token:
-        # Lokalt läge: spara till fil istället
-        output_path = SCRIPT_DIR / "widget_data.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(_safe_json(data, indent=2))
-        print(f"\nSparade data lokalt till: {output_path}")
-        return
-
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-
-    payload = {
-        "description": "Market Widget Data",
-        "files": {
-            "market_data.json": {
-                "content": _safe_json(data, indent=2)
-            }
-        },
-    }
-
-    if gist_id:
-        # Uppdatera befintlig gist
-        resp = requests.patch(
-            f"https://api.github.com/gists/{gist_id}",
-            headers=headers,
-            json=payload,
+        return {}
+    try:
+        r = requests.get(
+            "https://api.github.com/repos/linuspaulsson2/market-widget/contents/market_data.json?ref=main",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.raw"},
+            timeout=20,
         )
-    else:
-        # Skapa ny gist
-        payload["public"] = False  # Olistad men tillgänglig via URL
-        resp = requests.post(
-            "https://api.github.com/gists",
-            headers=headers,
-            json=payload,
-        )
-
-    if resp.status_code in (200, 201):
-        gist_data = resp.json()
-        raw_url = gist_data["files"]["market_data.json"]["raw_url"]
-        print(f"\nGist uppdaterad! Raw URL: {raw_url}")
-        print(f"Gist ID: {gist_data['id']}")
-    else:
-        print(f"\nFEL: Kunde inte uppdatera Gist: {resp.status_code} {resp.text}")
-        sys.exit(1)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
 
 
 def write_private_data(data: dict):
@@ -2699,14 +2661,7 @@ def main():
     # slå på igen (då hämtas de som mest var NEWS_REFRESH_HOURS:e timme).
     NEWS_ENABLED = False
     NEWS_REFRESH_HOURS = 3
-    _prev_gist = {}
-    try:
-        _gid = os.environ.get("GIST_ID", "8460e555321c49d26ebbb1d643ead354")
-        _r = requests.get(f"https://gist.githubusercontent.com/linuspaulsson2/{_gid}/raw/market_data.json", timeout=15)
-        if _r.ok:
-            _prev_gist = _r.json()
-    except Exception as _e:
-        print(f"  (kunde inte läsa förra gist för nyhets-cache: {_e})")
+    _prev_gist = _read_private_market_data()
     refresh_news = True
     _prev_news_stamp = _prev_gist.get("news_updated_at", "")
     try:

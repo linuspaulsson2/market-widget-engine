@@ -59,13 +59,11 @@ jobs:
 
       - name: Run update
         env:
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-          GIST_ID: ${{ secrets.GIST_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DROPBOX_XLSX_URL: ${{ secrets.DROPBOX_XLSX_URL }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          # Skriv market_data.json privat (Contents: Write på market-widget).
-          # Uppgradera DATA_TOKEN till write, eller lägg en separat PRIVATE_WRITE_TOKEN.
+          # Skriv/läs market_data.json i privata repot (Contents: Write på market-widget).
+          # DATA_TOKEN uppgraderad till write (eller separat PRIVATE_WRITE_TOKEN).
           DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
           PRIVATE_WRITE_TOKEN: ${{ secrets.PRIVATE_WRITE_TOKEN }}
         run: python update_data.py
