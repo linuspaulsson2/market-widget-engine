@@ -2859,7 +2859,7 @@ def main():
     # NEWS_ENABLED=False stänger av dem HELT (tomma sektioner, ingen hämtning) —
     # tillfälligt av juli 2026 för att spara Actions-minuter. Sätt True för att
     # slå på igen (då hämtas de som mest var NEWS_REFRESH_HOURS:e timme).
-    NEWS_ENABLED = True
+    NEWS_ENABLED = False  # Nyheter genereras av daglig Claude Code-rutin (Max-abonnemang), inte API
     NEWS_REFRESH_HOURS = 20  # nyheter (och smart news) uppdateras ~en gång/dygn
     _prev_gist = _read_prev_public()
     refresh_news = True
@@ -2950,9 +2950,13 @@ def main():
         upcoming_dividends = _prev_gist.get("upcoming_dividends", []) or []
         print(f"  Återanvänder {len(top_news)} nyheter, {len(market_news)} marknadsnyheter, {len(upcoming_earnings)} rapporter, {len(upcoming_dividends)} utdelningar")
     else:
-        # Nyheter helt avstängda — tomma sektioner, ingen långsam hämtning.
-        top_news, market_news, upcoming_earnings, upcoming_dividends = [], [], [], []
-        news_updated_at = ""
+        # Nyhetsgenerering avstängd i pipelinen — nyheterna skrivs av den dagliga
+        # Claude Code-rutinen (Max-abonnemang) direkt till gisten. Pipelinen
+        # BEVARAR dem (carry-forward) så var-20-min-körningen inte nollar dem.
+        top_news = _prev_gist.get("news", []) or []
+        market_news = _prev_gist.get("market_news", []) or []
+        upcoming_earnings, upcoming_dividends = [], []  # räknas om i kalenderblocket
+        news_updated_at = _prev_gist.get("news_updated_at", "")
 
     # Hämta alla holdings (hela portföljen)
     print("\nHämtar alla holdings (batch)...")
