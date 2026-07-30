@@ -2778,6 +2778,41 @@ def main():
     print("\nHämtar alla holdings (batch)...")
     all_holdings_data = fetch_all_holdings()
 
+    # --- Kalender (rapporter + utdelningar) — OBEROENDE av NEWS_ENABLED. ---
+    # Rapport-/utdelningsdatum ändras sällan → räkna om var CALENDAR_REFRESH_HOURS:e
+    # timme, återanvänd annars förra gistens kalender så den ÖVERLEVER varje cron
+    # (bugg innan: else-grenen ovan nollade kalendern varje körning). "Lita aldrig
+    # på tomt": om cachen är tom räknar vi om ändå, så en enstaka stale gist-läsning
+    # inte permanent-nollar kalendern. Full portfölj — inte bara config/focus.
+    CALENDAR_REFRESH_HOURS = 12
+    _prev_cal_e = _prev_gist.get("upcoming_earnings", []) or []
+    _prev_cal_d = _prev_gist.get("upcoming_dividends", []) or []
+    _prev_cal_stamp = _prev_gist.get("calendar_updated_at", "")
+    _cal_stale = True
+    try:
+        if _prev_cal_stamp:
+            _cage = (_now_dt - datetime.strptime(_prev_cal_stamp, "%Y-%m-%d %H:%M")).total_seconds() / 3600.0
+            _cal_stale = _cage >= CALENDAR_REFRESH_HOURS
+    except Exception:
+        _cal_stale = True
+
+    if _cal_stale or not _prev_cal_e:
+        cal_src = [{"ticker": h["ticker"], "name": h.get("name", h["ticker"])}
+                   for h in all_holdings_data
+                   if h.get("ticker")
+                   and not h["ticker"].upper().endswith("-USD")   # krypto
+                   and not h["ticker"].upper().startswith("0P")]  # fonder
+        print(f"\nKalender: räknar om för {len(cal_src)} innehav…")
+        upcoming_earnings = fetch_upcoming_earnings(cal_src, days_ahead=90)
+        upcoming_dividends = fetch_upcoming_dividends(cal_src, days_ahead=90)
+        calendar_updated_at = market["timestamp_swe"]
+        print(f"  {len(upcoming_earnings)} rapporter, {len(upcoming_dividends)} utdelningar")
+    else:
+        upcoming_earnings, upcoming_dividends = _prev_cal_e, _prev_cal_d
+        calendar_updated_at = _prev_cal_stamp
+        print(f"\nKalender: återanvänder {len(upcoming_earnings)} rapporter, "
+              f"{len(upcoming_dividends)} utdelningar (färsk nog)")
+
     # Hämta watchlist-aktier (bevakning, ej köpt än). Exkludera tickers du redan
     # äger så att en bevakad aktie som blivit köpt bara visas under Innehav.
     print("\nHämtar watchlist (batch)...")
@@ -2851,6 +2886,7 @@ def main():
         "market_news": market_news,
         "upcoming_earnings": upcoming_earnings,
         "upcoming_dividends": upcoming_dividends,
+        "calendar_updated_at": calendar_updated_at,
         "weekly_summary": weekly_summary,
         "all_holdings": all_holdings_data,
         "watchlist": watchlist_data,
