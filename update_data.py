@@ -2653,51 +2653,6 @@ def publish_public_gist(public_data: dict, arenas_json: str):
         print(f"  (publik gist fel: {e})")
 
 
-def write_private_data(data: dict):
-    """Skriv market_data.json till det PRIVATA repot (autentiserat) så portföljen
-    aldrig ligger publikt läsbar. Best-effort: en saknad eller otillräcklig token
-    loggar en varning men FÄLLER INTE körningen — så dubbelskrivningen under
-    övergången aldrig kan bryta pipelinen. Kräver en token med Contents: Write på
-    linuspaulsson2/market-widget (t.ex. DATA_TOKEN uppgraderad, eller en separat
-    PRIVATE_WRITE_TOKEN)."""
-    import base64
-    token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
-    if not token:
-        # Lokalt läge (ingen token): spara till fil istället för att fela.
-        output_path = SCRIPT_DIR / "widget_data.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(_safe_json(data, indent=2))
-        print(f"\nIngen token — sparade data lokalt till: {output_path}")
-        return
-    api = "https://api.github.com/repos/linuspaulsson2/market-widget/contents/market_data.json"
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-    try:
-        sha = None
-        g = requests.get(f"{api}?ref=main", headers=headers, timeout=30)
-        if g.status_code == 200:
-            sha = g.json().get("sha")
-        elif g.status_code != 404:
-            print(f"  (privat skrivning: kunde inte läsa SHA, HTTP {g.status_code})")
-        body = {
-            "message": f"Update market_data.json ({data.get('updated_at', '')})",
-            "content": base64.b64encode(_safe_json(data, indent=2).encode("utf-8")).decode("ascii"),
-            "branch": "main",
-        }
-        if sha:
-            body["sha"] = sha
-        p = requests.put(api, headers=headers, json=body, timeout=60)
-        if p.status_code in (200, 201):
-            print("  Privat market_data.json skriven till linuspaulsson2/market-widget")
-        else:
-            print(f"\nFEL: privat skrivning misslyckades: HTTP {p.status_code} — {p.text[:200]}")
-            sys.exit(1)
-    except SystemExit:
-        raise
-    except Exception as e:
-        print(f"\nFEL: privat skrivning fel: {e}")
-        sys.exit(1)
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
