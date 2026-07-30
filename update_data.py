@@ -2095,7 +2095,7 @@ def fetch_previous_portfolio() -> dict:
     som prev_close så att helg-körningar visar riktig förändring.
     """
     try:
-        old_data = _read_private_market_data()
+        old_data = _read_prev_private_portfolio()
         if old_data:
             port = old_data.get("portfolio", {})
             old_value = port.get("value_sek", 0)
@@ -2508,16 +2508,29 @@ def build_company_info(tickers: list, previous: dict, today: str) -> dict:
     return out
 
 
-def _read_private_market_data() -> dict:
-    """Läs förra körningens market_data.json från det PRIVATA repot — källan efter
-    att den publika gisten togs bort. Används för carry-forward (portföljvärde,
-    nyheter, kalender). Returnerar {} vid fel eller lokalt läge (ingen token)."""
+def _read_prev_public() -> dict:
+    """Förra körningens PUBLIKA gist (carry-forward av nyheter/kalender/company_info
+    — inga belopp där). Via gist-API:t (auktoritativt, inte CDN-cache). {} vid fel."""
+    try:
+        g = requests.get(f"https://api.github.com/gists/{PUBLIC_GIST_ID}", timeout=20)
+        if g.status_code != 200:
+            return {}
+        f = g.json().get("files", {}).get("market_data.json", {})
+        if f.get("truncated"):
+            return requests.get(f["raw_url"], timeout=20).json()
+        return json.loads(f.get("content", "{}") or "{}")
+    except Exception:
+        return {}
+
+
+def _read_prev_private_portfolio() -> dict:
+    """Förra körningens privata portfolio.json (för prev portföljvärde). {} vid fel."""
     token = os.environ.get("PRIVATE_WRITE_TOKEN") or os.environ.get("DATA_TOKEN")
     if not token:
         return {}
     try:
         r = requests.get(
-            "https://api.github.com/repos/linuspaulsson2/market-widget/contents/market_data.json?ref=main",
+            "https://api.github.com/repos/linuspaulsson2/market-widget/contents/portfolio.json?ref=main",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.raw"},
             timeout=20,
         )
@@ -2773,9 +2786,9 @@ def main():
     # NEWS_ENABLED=False stänger av dem HELT (tomma sektioner, ingen hämtning) —
     # tillfälligt av juli 2026 för att spara Actions-minuter. Sätt True för att
     # slå på igen (då hämtas de som mest var NEWS_REFRESH_HOURS:e timme).
-    NEWS_ENABLED = False
+    NEWS_ENABLED = True
     NEWS_REFRESH_HOURS = 3
-    _prev_gist = _read_private_market_data()
+    _prev_gist = _read_prev_public()
     refresh_news = True
     _prev_news_stamp = _prev_gist.get("news_updated_at", "")
     try:
@@ -3007,12 +3020,10 @@ def main():
         "company_info": company_info,
     }
 
-    # Publicera i tre delar:
-    #  - privat FULL market_data.json → carry-forward + installerad app under övergången
-    #  - privat portfolio.json        → BELOPPEN (nya appen läser, aldrig publikt)
-    #  - publik gist                  → allt UTOM belopp + arenas.json (spegel)
+    # Publicera i två delar:
+    #  - privat portfolio.json → BELOPPEN (appen läser, aldrig publikt)
+    #  - publik gist           → allt UTOM belopp + arenas.json (spegel)
     public_data, private_data = split_public_private(data)
-    write_private_data(data)
     _gh_put_private("portfolio.json", _safe_json(private_data, indent=2),
                     f"Update portfolio.json ({data.get('updated_at', '')})")
     publish_public_gist(public_data, _read_arenas_private())
