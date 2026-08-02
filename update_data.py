@@ -2633,6 +2633,12 @@ def build_company_info(tickers: list, previous: dict, today: str) -> dict:
 
     keep = {(t or "").upper() for t in tickers}
     out = {t: v for t, v in out.items() if t in keep}
+    # Heal carried-forward entries written before the _finite guard existed
+    # (e.g. KRKNF trailingPE = "Infinity") so the string can't linger in the gist.
+    for v in out.values():
+        for k in ("marketCap", "trailingPE", "priceToSales", "netMargin", "revenueGrowth", "dividendYield"):
+            if k in v:
+                v[k] = _finite(v[k])
     print(f"  company_info: {fetched} nya/uppdaterade, {len(out)} bolag totalt")
     return out
 
