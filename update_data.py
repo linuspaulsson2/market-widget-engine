@@ -2662,6 +2662,12 @@ def _read_prev_private_portfolio() -> dict:
 AMOUNT_KEYS = ("shares", "invested", "value_sek", "pct_of_portfolio", "change_sek")
 PUBLIC_GIST_ID = "b2b5723bb0a7396253041591548e413b"
 
+# Module-level default so publish_public_gist() (which preserves the locally-owned
+# news) can read it. The main flow re-affirms this as a local `NEWS_ENABLED = False`;
+# both are False. Without this module global, publish_public_gist() raised
+# NameError and crashed the whole run before market_data.json was committed.
+NEWS_ENABLED = False
+
 
 def split_public_private(data: dict) -> tuple:
     """Dela feeden i (public_data, private_data). Publik = allt UTOM belopp:
