@@ -2579,6 +2579,16 @@ def build_company_info(tickers: list, previous: dict, today: str) -> dict:
     """
     out = {t: dict(v) for t, v in (previous or {}).items()}
 
+    def _finite(v):
+        """Only real, finite numbers survive — a loss-maker's P/E = inf (or NaN)
+        otherwise serialises as the string "Infinity", which crashes strict
+        Double decoders in the app. Non-finite / non-numeric → None."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if (f == f and f not in (float("inf"), float("-inf"))) else None
+
     def _age_days(stamp: str) -> int:
         try:
             return (datetime.strptime(today, "%Y-%m-%d")
@@ -2606,15 +2616,15 @@ def build_company_info(tickers: list, previous: dict, today: str) -> dict:
             continue
         out[tu] = {
             "description": _trim_sentences(info.get("longBusinessSummary") or "", 3),
-            "marketCap": info.get("marketCap"),
-            "trailingPE": info.get("trailingPE"),
-            "priceToSales": info.get("priceToSalesTrailing12Months"),
-            "netMargin": info.get("profitMargins"),
-            "revenueGrowth": info.get("revenueGrowth"),
+            "marketCap": _finite(info.get("marketCap")),
+            "trailingPE": _finite(info.get("trailingPE")),
+            "priceToSales": _finite(info.get("priceToSalesTrailing12Months")),
+            "netMargin": _finite(info.get("profitMargins")),
+            "revenueGrowth": _finite(info.get("revenueGrowth")),
             # trailingAnnualDividendYield is a clean fraction (0.0013); the raw
             # dividendYield field flip-flops between fraction and percent by
             # yfinance version, so avoid it.
-            "dividendYield": info.get("trailingAnnualDividendYield"),
+            "dividendYield": _finite(info.get("trailingAnnualDividendYield")),
             "currency": info.get("currency"),
             "fetched": today,
         }
