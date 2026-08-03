@@ -2801,7 +2801,16 @@ def publish_public_gist(public_data: dict, arenas_json: str):
                     params={"_": int(datetime.now().timestamp())}, timeout=30)
                 if _live.status_code == 200:
                     _lc = _live.json().get("files", {}).get("market_data.json", {})
-                    _lpd = json.loads(_lc.get("content", "{}") or "{}")
+                    # GitHub TRUNCATES gist file content >1 MB in the /gists API and
+                    # sets truncated=true + a raw_url. The gist grew past 1 MB, so the
+                    # inline content was cut → invalid JSON → publish was skipped and
+                    # the gist froze. Fetch the raw_url for the full authoritative body.
+                    _content = _lc.get("content") or ""
+                    if _lc.get("truncated") and _lc.get("raw_url"):
+                        _content = requests.get(
+                            _lc["raw_url"],
+                            headers={"Authorization": f"token {token}"}, timeout=30).text
+                    _lpd = json.loads(_content or "{}")
                     public_data["news"] = _lpd.get("news") or []
                     public_data["news_updated_at"] = _lpd.get("news_updated_at") or ""
                     public_data["market_news"] = _lpd.get("market_news") or []
