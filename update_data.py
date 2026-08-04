@@ -710,7 +710,7 @@ def merge_purchases_into_holdings(holdings: list) -> list:
             ccy = "GBP"
         elif ticker.endswith(".SW"):
             ccy = "CHF"
-        elif ticker.endswith(".TO"):
+        elif ticker.endswith((".TO", ".V")):
             ccy = "CAD"
         else:
             ccy = "USD"
@@ -867,7 +867,7 @@ def fetch_all_holdings() -> list:
                     currency = "CHF"
                 elif t.endswith(".HE"):
                     currency = "EUR"
-                elif t.endswith(".TO"):
+                elif t.endswith((".TO", ".V")):
                     currency = "CAD"
                 else:
                     currency = "USD"
@@ -1056,7 +1056,7 @@ def fetch_watchlist(held_tickers=None) -> list:
                     currency = "GBP"
                 elif t.endswith(".SW"):
                     currency = "CHF"
-                elif t.endswith(".TO"):
+                elif t.endswith((".TO", ".V")):
                     currency = "CAD"
                 else:
                     currency = "USD"
