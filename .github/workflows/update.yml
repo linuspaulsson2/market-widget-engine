@@ -5,8 +5,14 @@
 name: Update Market Data
 
 on:
-  # Triggered by cron-job.org (workflow_dispatch). No schedule: keeps it simple.
+  # Manual + cron-job.org trigger.
   workflow_dispatch:
+  # In-repo schedule (public repo → free unlimited Actions, and a price run makes
+  # NO Anthropic calls while NEWS_ENABLED=False, so this costs zero tokens).
+  # Times are UTC. Summer (CEST=UTC+2): SE 09:00→07:00Z, US close 22:00→20:00Z.
+  schedule:
+    - cron: "*/10 6-21 * * 1-5"   # every 10 min during market hours, weekdays
+    - cron: "0 * * * *"            # hourly otherwise (overnight FX + weekends)
 
 jobs:
   update:
