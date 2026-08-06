@@ -5,14 +5,17 @@
 name: Update Market Data
 
 on:
-  # Manual + cron-job.org trigger.
+  # cron-job.org drives the cadence via workflow_dispatch (already ~10 min). An
+  # in-repo `schedule:` was removed 2026-08-06: it double-triggered on top of
+  # cron-job.org, and the overlapping runs piled up and failed at "Set up job"
+  # (runner provisioning) — an intermittent GitHub-infra failure, not our code.
   workflow_dispatch:
-  # In-repo schedule (public repo → free unlimited Actions, and a price run makes
-  # NO Anthropic calls while NEWS_ENABLED=False, so this costs zero tokens).
-  # Times are UTC. Summer (CEST=UTC+2): SE 09:00→07:00Z, US close 22:00→20:00Z.
-  schedule:
-    - cron: "*/10 6-21 * * 1-5"   # every 10 min during market hours, weekdays
-    - cron: "0 * * * *"            # hourly otherwise (overnight FX + weekends)
+
+# Only one price run at a time; a fresh trigger supersedes an in-flight one so
+# runs can never queue up and starve each other's runner.
+concurrency:
+  group: update-market-data
+  cancel-in-progress: true
 
 jobs:
   update:
