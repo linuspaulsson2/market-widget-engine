@@ -11,11 +11,13 @@ on:
   # (runner provisioning) — an intermittent GitHub-infra failure, not our code.
   workflow_dispatch:
 
-# Only one price run at a time; a fresh trigger supersedes an in-flight one so
-# runs can never queue up and starve each other's runner.
+# Only one price run at a time. cancel-in-progress: false → a new trigger waits
+# for the running one to FINISH (which commits fresh data) rather than killing
+# it, so an over-eager trigger cadence can never starve completion. The real
+# cadence lever is the cron-job.org interval (keep it ≥20 min; Yahoo lags ~15).
 concurrency:
   group: update-market-data
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   update:
