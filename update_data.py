@@ -2743,7 +2743,20 @@ def _gh_put_private(path: str, content_str: str, message: str):
                 "content": base64.b64encode(content_str.encode("utf-8")).decode("ascii")}
         if sha:
             body["sha"] = sha
-        p = requests.put(api, headers=headers, json=body, timeout=60)
+        # Retry på transienta fel: GitHub:s API kastar då och då 5xx (två körningar
+        # föll på en enstaka 500 den 16 sep 2026 och mejlade "Run failed" i onödan).
+        # 409/422 = SHA-konflikt → hämta om SHA:n och försök igen.
+        p = None
+        for attempt in range(3):
+            if attempt:
+                import time
+                time.sleep(5 * attempt)
+                g2 = requests.get(f"{api}?ref=main", headers=headers, timeout=30)
+                if g2.status_code == 200:
+                    body["sha"] = g2.json().get("sha")
+            p = requests.put(api, headers=headers, json=body, timeout=60)
+            if p.status_code in (200, 201) or not (p.status_code >= 500 or p.status_code in (409, 422)):
+                break
         if p.status_code in (200, 201):
             print(f"  Privat {path} skriven")
         else:
