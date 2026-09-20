@@ -2755,7 +2755,16 @@ def _gh_put_private(path: str, content_str: str, message: str):
                 if g2.status_code == 200:
                     body["sha"] = g2.json().get("sha")
             p = requests.put(api, headers=headers, json=body, timeout=60)
-            if p.status_code in (200, 201) or not (p.status_code >= 500 or p.status_code in (409, 422)):
+            # Transient = 5xx, SHA-konflikt (409/422), eller GitHubs egna
+            # "försök igen"-svar som kommer som 403/429 ("Timed out validating
+            # rule, please try again" fällde körningen 2026-09-20). Ett äkta
+            # behörighets-403 ("Bad credentials", "Resource not accessible")
+            # saknar de fraserna och faller fortfarande direkt.
+            _txt = (p.text or "").lower()
+            _transient = (p.status_code >= 500 or p.status_code in (409, 422)
+                          or (p.status_code in (403, 429)
+                              and any(k in _txt for k in ("try again", "timed out", "rate limit", "secondary rate"))))
+            if p.status_code in (200, 201) or not _transient:
                 break
         if p.status_code in (200, 201):
             print(f"  Privat {path} skriven")
